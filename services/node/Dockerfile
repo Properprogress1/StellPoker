@@ -1,8 +1,12 @@
 FROM rust:1.79-slim AS builder
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY services/node/ ./services/node/
-COPY Cargo.toml ./Cargo.toml
-RUN cargo build --release -p mpc-node 2>/dev/null || true
+# Copy full workspace so cargo can resolve all members
+COPY Cargo.toml Cargo.lock ./
+COPY contracts/ ./contracts/
+COPY stellar-zk-cards/ ./stellar-zk-cards/
+COPY services/ ./services/
+RUN cargo build --release -p mpc-node
 
 # Build co-noir from source
 FROM rust:1.79-slim AS conoir-builder
@@ -14,7 +18,6 @@ RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib
 COPY --from=builder /app/target/release/mpc-node /usr/local/bin/mpc-node
 COPY --from=conoir-builder /usr/local/cargo/bin/co-noir /usr/local/bin/co-noir
 
-# Party configs are mounted via docker-compose volumes
-# Circuit artifacts and CRS are mounted via shared volumes
+# Party configs and CRS are mounted via docker-compose volumes
 
 CMD ["mpc-node"]
