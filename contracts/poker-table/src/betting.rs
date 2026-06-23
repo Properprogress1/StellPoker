@@ -28,6 +28,7 @@ pub fn process_action(
     }
 
     let current_bet = max_bet_this_round(table)?;
+    let pot_before = table.pot;
 
     match action {
         Action::Fold => {
@@ -36,6 +37,7 @@ pub fn process_action(
 
             // Check if only one player remains
             if game::active_player_count(table) == 1 {
+                emit_action(env, table, player, action, 0);
                 game::settle_fold_win(env, table)?;
                 return Ok(());
             }
@@ -54,6 +56,7 @@ pub fn process_action(
 
             p.stack -= actual;
             p.bet_this_round += actual;
+            p.committed += actual;
             table.pot += actual;
 
             if p.stack == 0 {
@@ -74,6 +77,7 @@ pub fn process_action(
 
             p.stack -= *amount;
             p.bet_this_round += *amount;
+            p.committed += *amount;
             table.pot += *amount;
 
             if p.stack == 0 {
@@ -93,6 +97,7 @@ pub fn process_action(
 
             p.stack -= total_needed;
             p.bet_this_round += total_needed;
+            p.committed += total_needed;
             table.pot += total_needed;
 
             if p.stack == 0 {
@@ -103,6 +108,7 @@ pub fn process_action(
         Action::AllIn => {
             let amount = p.stack;
             p.bet_this_round += amount;
+            p.committed += amount;
             table.pot += amount;
             p.stack = 0;
             p.all_in = true;
@@ -110,10 +116,35 @@ pub fn process_action(
         }
     }
 
+    // Emit a per-action event so the frontend can react without polling. The
+    // amount is the chips added to the pot by this action (0 for fold/check).
+    emit_action(env, table, player, action, table.pot - pot_before);
+
     table.last_action_ledger = env.ledger().sequence();
 
     // Advance turn
     advance_turn(env, table)
+}
+
+/// Publish a `player_action` event describing a betting move. Topic carries the
+/// action type symbol; data is `(player, amount_added)`.
+fn emit_action(env: &Env, table: &TableState, player: &Address, action: &Action, amount: i128) {
+    let label = match action {
+        Action::Fold => "fold",
+        Action::Check => "check",
+        Action::Call => "call",
+        Action::Bet(_) => "bet",
+        Action::Raise(_) => "raise",
+        Action::AllIn => "all_in",
+    };
+    env.events().publish(
+        (
+            Symbol::new(env, "player_action"),
+            table.id,
+            Symbol::new(env, label),
+        ),
+        (player.clone(), amount),
+    );
 }
 
 /// Reset betting state for a new round.

@@ -1,6 +1,7 @@
 use soroban_sdk::{Env, Symbol, Vec};
 
 use crate::game_hub;
+use crate::pot;
 use crate::types::*;
 
 /// Initialize state for a new hand.
@@ -23,6 +24,7 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
         p.folded = false;
         p.all_in = false;
         p.bet_this_round = 0;
+        p.committed = 0;
         table.players.set(i, p);
     }
 
@@ -59,6 +61,7 @@ fn post_blind(table: &mut TableState, seat: u32, amount: i128) -> Result<(), Pok
 
     player.stack -= actual;
     player.bet_this_round = actual;
+    player.committed += actual;
     table.pot += actual;
     table.players.set(seat, player);
     Ok(())
@@ -103,28 +106,60 @@ pub fn settle_showdown(
     table: &mut TableState,
     winner_seat: u32,
 ) -> Result<(), PokerTableError> {
-    // Award pot to the proved winner.
-    let winnings = table.pot;
-    let mut winner = table
-        .players
-        .get(winner_seat)
-        .ok_or(PokerTableError::InvalidPlayerIndex)?;
-    winner.stack += winnings;
-    table.players.set(winner_seat, winner.clone());
-    table.pot = 0;
+    let total_pot = table.pot;
 
+    // Compute the main pot and any side pots from cumulative contributions, then
+    // award each to its best eligible contributor. The proved winner is ranked
+    // first; the remaining non-folded contenders follow in seat order so that
+    // side pots the proved winner cannot win still go to an eligible player.
+    let pots = pot::calculate_side_pots(env, table)?;
+    table.side_pots = pots.clone();
+    let ranking = build_winner_ranking(env, table, winner_seat)?;
+    let payouts = pot::distribute_pots(env, table, &pots, &ranking)?;
+
+    table.pot = 0;
     table.phase = GamePhase::Settlement;
     table.last_action_ledger = env.ledger().sequence();
 
-    // Notify game hub: player1_won = true if winner is seat 0 (player1)
+    // Notify game hub: player1_won = true if the proved winner is seat 0.
     let player1_won = winner_seat == 0;
     game_hub::notify_end(env, &table.config.game_hub, table.session_id, player1_won);
 
+    let winner = table
+        .players
+        .get(winner_seat)
+        .ok_or(PokerTableError::InvalidPlayerIndex)?;
     env.events().publish(
         (Symbol::new(env, "hand_settled"), table.id),
-        (winner.address.clone(), winnings),
+        (winner.address.clone(), total_pot, payouts),
     );
     Ok(())
+}
+
+/// Build a best-first ranking of contenders for pot distribution. The ZK
+/// showdown proof establishes the single overall winner; we place that seat
+/// first and append the remaining non-folded players in seat order. For the
+/// common case (no side pots, or the proved winner eligible everywhere) this
+/// awards the entire pot to the proved winner. When side pots exist that the
+/// proved winner did not contribute to, the next eligible contender wins them.
+fn build_winner_ranking(
+    env: &Env,
+    table: &TableState,
+    winner_seat: u32,
+) -> Result<Vec<u32>, PokerTableError> {
+    let mut ranking: Vec<u32> = Vec::new(env);
+    ranking.push_back(winner_seat);
+    for i in 0..table.players.len() {
+        let p = table
+            .players
+            .get(i)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        if p.folded || p.seat_index == winner_seat {
+            continue;
+        }
+        ranking.push_back(p.seat_index);
+    }
+    Ok(ranking)
 }
 
 /// Award pot to last player standing (all others folded).

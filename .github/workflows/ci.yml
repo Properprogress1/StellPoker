@@ -43,18 +43,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Nargo
+      - name: Cache Nargo toolchain
+        uses: actions/cache@v4
+        with:
+          # compile-circuits.sh downloads a pinned Nargo release into
+          # .tmp_tools and uses .tmp_nargo_home as an isolated NARGO/HOME.
+          path: |
+            .tmp_tools
+            .tmp_nargo_home
+          key: ${{ runner.os }}-nargo-1.0.0-beta.17
+          restore-keys: ${{ runner.os }}-nargo-
+
+      - name: Compile all Noir circuits
+        run: ./scripts/compile-circuits.sh
+
+      - name: Install Nargo for tests
         run: |
           curl -L https://raw.githubusercontent.com/noir-lang/noirup/refs/heads/main/install | bash
           echo "$HOME/.nargo/bin" >> $GITHUB_PATH
           $HOME/.nargo/bin/noirup -v 1.0.0-beta.17
-
-      - name: Check circuits compile
-        run: |
-          for circuit in deal_valid reveal_board_valid showdown_valid; do
-            echo "Checking $circuit..."
-            (cd circuits/$circuit && nargo check)
-          done
 
       - name: Run Noir library tests
         run: cd circuits/lib && nargo test

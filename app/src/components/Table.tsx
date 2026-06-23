@@ -19,6 +19,7 @@ import {
 import { GameBoyButton, GameBoyModal } from "./GameBoyModal";
 import { usePokerActions } from "@/lib/use-poker-actions";
 import { getDealerLine } from "@/lib/dealer-lines";
+import { subscribePokerTableEvents } from "@/lib/events";
 
 type ActiveRequest = "deal" | "flop" | "turn" | "river" | "showdown" | null;
 type PlayMode = "single" | "headsup" | "multi";
@@ -255,10 +256,28 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
 
   useEffect(() => {
     void syncOnChainState();
+
+    // Event-driven refresh: subscribe to the poker table contract's events and
+    // re-sync immediately whenever a state transition is emitted. A slower
+    // interval remains as a safety net in case an event is missed.
+    let unsubscribe: (() => void) | undefined;
+    void subscribePokerTableEvents(() => {
+      void syncOnChainState();
+    })
+      .then((sub) => {
+        unsubscribe = sub.stop;
+      })
+      .catch(() => {
+        // Event subscription unavailable — fall back to interval polling only.
+      });
+
     const interval = setInterval(() => {
       void syncOnChainState();
-    }, 4000);
-    return () => clearInterval(interval);
+    }, 8000);
+    return () => {
+      clearInterval(interval);
+      unsubscribe?.();
+    };
   }, [syncOnChainState]);
 
   // Infer sensible default play mode from table capacity when no explicit mode was provided.

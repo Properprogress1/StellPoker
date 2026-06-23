@@ -3,10 +3,38 @@ mod test {
     use crate::types::*;
     use crate::{PokerTableContract, PokerTableContractClient};
     use soroban_sdk::{
+        contract, contractimpl,
         testutils::{Address as _, Ledger as _},
         token::{StellarAssetClient, TokenClient},
         Address, BytesN, Env, Vec,
     };
+
+    // ---------------------------------------------------------------------------
+    // Mock Game Hub
+    //
+    // The poker-table contract calls a Game Hub via `start_game`/`end_game`. The
+    // real hub lives in a separate crate (`contracts/game-hub`), so tests register
+    // this minimal mock that satisfies the same interface.
+    // ---------------------------------------------------------------------------
+
+    #[contract]
+    pub struct GameHubContract;
+
+    #[contractimpl]
+    impl GameHubContract {
+        pub fn start_game(
+            _env: Env,
+            _game_id: Address,
+            _session_id: u32,
+            _player1: Address,
+            _player2: Address,
+            _player1_points: i128,
+            _player2_points: i128,
+        ) {
+        }
+
+        pub fn end_game(_env: Env, _session_id: u32, _player1_won: bool) {}
+    }
 
     // ---------------------------------------------------------------------------
     // Helpers
@@ -29,7 +57,7 @@ mod test {
         verifier: &Address,
     ) -> TableConfig {
         // Register a mock game hub contract
-        let game_hub = env.register(crate::game_hub::GameHubContract, ());
+        let game_hub = env.register(GameHubContract, ());
         TableConfig {
             token: token.clone(),
             min_buy_in: 100,

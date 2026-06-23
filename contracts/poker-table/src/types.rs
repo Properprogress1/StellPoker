@@ -53,6 +53,7 @@ pub enum PokerTableError {
     TimeoutNotReached = 32,
     TimeoutNotApplicable = 33,
     HoleCardMismatch = 34,
+    WinnerNotEligibleForPot = 35,
 }
 
 #[contracttype]
@@ -61,6 +62,10 @@ pub struct PlayerState {
     pub address: Address,
     pub stack: i128,
     pub bet_this_round: i128,
+    /// Total chips this player has committed to the pot across every betting
+    /// round of the current hand. Used to compute multi-way side pots, since a
+    /// player can only win the chips they themselves have contributed to.
+    pub committed: i128,
     pub folded: bool,
     pub all_in: bool,
     pub sitting_out: bool,

@@ -6,6 +6,8 @@ use soroban_sdk::{contract, contractimpl, token, Address, Bytes, BytesN, Env, Sy
 mod betting;
 mod game;
 mod game_hub;
+#[cfg(test)]
+mod invariants_test;
 mod pot;
 mod test;
 mod timeout;
@@ -191,6 +193,7 @@ impl PokerTableContract {
             address: player.clone(),
             stack: buy_in,
             bet_this_round: 0,
+            committed: 0,
             folded: false,
             all_in: false,
             sitting_out: false,
@@ -347,7 +350,7 @@ impl PokerTableContract {
 
         env.events().publish(
             (Symbol::new(&env, "deal_committed"), table_id),
-            table.hand_number,
+            (table.hand_number, table.hand_commitments.clone()),
         );
 
         Ok(())
@@ -442,8 +445,10 @@ impl PokerTableContract {
 
         save_table(&env, &table);
 
-        env.events()
-            .publish((Symbol::new(&env, "board_revealed"), table_id), cards);
+        env.events().publish(
+            (Symbol::new(&env, "board_revealed"), table_id),
+            (cards, indices),
+        );
 
         Ok(())
     }
@@ -476,8 +481,12 @@ impl PokerTableContract {
         let board_start = table.dealt_indices.len() - BOARD_INDICES_COUNT;
         let mut board_indices: Vec<u32> = Vec::new(&env);
         for i in board_start..table.dealt_indices.len() {
-            board_indices
-                .push_back(table.dealt_indices.get(i).ok_or(PokerTableError::BoardNotComplete)?);
+            board_indices.push_back(
+                table
+                    .dealt_indices
+                    .get(i)
+                    .ok_or(PokerTableError::BoardNotComplete)?,
+            );
         }
 
         // Verify showdown proof via zk-verifier.
@@ -503,12 +512,7 @@ impl PokerTableContract {
         // Hole cards from the proof are seat-indexed (field 13..19 for hole_card1,
         // field 19..25 for hole_card2).  Submitted hole_cards are in active-player
         // order (seat order, skipping folded).
-        verify_hole_cards_against_proof(
-            &env,
-            &table,
-            &public_inputs,
-            &hole_cards,
-        )?;
+        verify_hole_cards_against_proof(&env, &table, &public_inputs, &hole_cards)?;
 
         // Settle using the winner_index from the proof (not re-evaluating).
         game::settle_showdown(&env, &mut table, winner_index)?;
@@ -551,11 +555,7 @@ impl PokerTableContract {
     }
 
     /// Update the Game Hub address for a table (admin only).
-    pub fn set_hub(
-        env: Env,
-        table_id: u32,
-        new_hub: Address,
-    ) -> Result<(), PokerTableError> {
+    pub fn set_hub(env: Env, table_id: u32, new_hub: Address) -> Result<(), PokerTableError> {
         let mut table = load_table(&env, table_id)?;
         table.admin.require_auth();
         table.config.game_hub = new_hub;
@@ -564,7 +564,11 @@ impl PokerTableContract {
     }
 
     /// Upgrade the contract WASM (admin only).
-    pub fn upgrade(env: Env, table_id: u32, new_wasm_hash: BytesN<32>) -> Result<(), PokerTableError> {
+    pub fn upgrade(
+        env: Env,
+        table_id: u32,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), PokerTableError> {
         let table = load_table(&env, table_id)?;
         table.admin.require_auth();
         env.deployer().update_current_contract_wasm(new_wasm_hash);
