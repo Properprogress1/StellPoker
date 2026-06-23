@@ -3,6 +3,7 @@
 import { Card } from "./Card";
 import { PixelCat, opponentSprite } from "./PixelCat";
 import { PixelChip } from "./PixelChip";
+import { Identicon } from "./Identicon";
 import type { Player } from "@/lib/game-state";
 
 interface PlayerSeatProps {
@@ -13,6 +14,10 @@ interface PlayerSeatProps {
   isWinner?: boolean;
   isBot?: boolean;
   labelOverride?: string;
+  /** Client-side display alias for this seat's address, if one has been set. */
+  alias?: string;
+  /** Renders a small edit affordance next to the label (own seat only). */
+  onEditAlias?: () => void;
   hideChipStats?: boolean;
 }
 
@@ -24,10 +29,19 @@ export function PlayerSeat({
   isWinner = false,
   isBot = false,
   labelOverride,
+  alias,
+  onEditAlias,
   hideChipStats = false,
 }: PlayerSeatProps) {
   const sprite = isUser ? 18 : opponentSprite(player.seat);
   const cardSize = isUser ? "md" : "sm";
+  const fallbackLabel = isUser
+    ? "— YOU —"
+    : isBot
+      ? "— AI BOT —"
+      : `${player.address.slice(0, 4)}...${player.address.slice(-4)}`;
+  const displayLabel =
+    labelOverride ?? (alias ? (isUser ? `${alias} (YOU)` : alias) : fallbackLabel);
 
   return (
     <div
@@ -63,16 +77,32 @@ export function PlayerSeat({
       )}
 
       {/* Label */}
-      <div className="text-[9px] mb-1" style={{
+      <div className="text-[9px] mb-1 flex items-center gap-1" style={{
         color: isUser ? '#f1c40f' : '#95a5a6',
         textShadow: '1px 1px 0 rgba(0,0,0,0.5)',
       }}>
-        {labelOverride ?? (isUser ? "— YOU —" : isBot ? "— AI BOT —" : `${player.address.slice(0, 4)}...${player.address.slice(-4)}`)}
-        {isDealer && <span style={{ color: '#f1c40f', marginLeft: '4px' }}>[D]</span>}
+        <span>{displayLabel}</span>
+        {isDealer && <span style={{ color: '#f1c40f' }}>[D]</span>}
+        {onEditAlias && (
+          <button
+            onClick={onEditAlias}
+            title="Change your alias"
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: '#95a5a6',
+              fontSize: '8px',
+              padding: 0,
+            }}
+          >
+            [EDIT]
+          </button>
+        )}
       </div>
 
       {/* Avatar */}
-      <div style={{ marginBottom: '4px' }}>
+      <div style={{ marginBottom: '4px', position: 'relative' }}>
         {isBot ? (
           <img
             src="/cat_sprites/bot.png"
@@ -82,11 +112,19 @@ export function PlayerSeat({
             style={{ imageRendering: "pixelated" }}
           />
         ) : (
-          <PixelCat
-            sprite={sprite}
-            size={isUser ? 72 : 48}
-            isUser={isUser}
-          />
+          <>
+            <PixelCat
+              sprite={sprite}
+              size={isUser ? 72 : 48}
+              isUser={isUser}
+            />
+            {/* Deterministic identicon badge — a stable visual fingerprint of
+                the seat's Stellar address, independent of the cat sprite
+                (which is assigned by seat index, not identity). */}
+            <div style={{ position: 'absolute', bottom: '-2px', right: '-2px' }}>
+              <Identicon seed={player.address} size={5} cellSize={3} />
+            </div>
+          </>
         )}
       </div>
 

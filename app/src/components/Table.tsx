@@ -17,9 +17,18 @@ import {
   type WalletSession,
 } from "@/lib/freighter";
 import { GameBoyButton, GameBoyModal } from "./GameBoyModal";
+import { HandHistoryPanel } from "./HandHistoryPanel";
 import { usePokerActions } from "@/lib/use-poker-actions";
 import { getDealerLine } from "@/lib/dealer-lines";
 import { subscribePokerTableEvents } from "@/lib/events";
+import { getAlias, setAlias } from "@/lib/alias-store";
+import {
+  loadHandHistory,
+  saveHandHistoryEntry,
+  buildHandRankName,
+  type HandHistoryEntry,
+  type Street,
+} from "@/lib/hand-history";
 
 type ActiveRequest = "deal" | "flop" | "turn" | "river" | "showdown" | null;
 type PlayMode = "single" | "headsup" | "multi";
@@ -88,9 +97,18 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
   const [lobby, setLobby] = useState<api.TableLobbyResponse | null>(null);
   const [botLine, setBotLine] = useState<string | null>(null);
   const [gameboyOpen, setGameboyOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyEntries, setHistoryEntries] = useState<HandHistoryEntry[]>(() =>
+    loadHandHistory(tableId)
+  );
   const [elapsed, setElapsed] = useState(0);
+  const [, bumpAliasTick] = useState(0);
   const autoStreetRef = useRef<string>("");
   const inferredModeRef = useRef(false);
+  const streetLogRef = useRef<{ handNumber: number; streets: { street: Street; pot: number; boardCards: number[] }[] }>({
+    handNumber: 0,
+    streets: [],
+  });
 
   const userAddress = wallet?.address;
   const userPlayer = userAddress
@@ -317,6 +335,47 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     }
   }, [loading]);
 
+  // Capture a street-by-street snapshot (pot + board) as each hand progresses,
+  // then persist a hand-history entry locally once the hand reaches
+  // settlement so it stays viewable for the rest of the session even after
+  // the live table state moves on to the next hand.
+  useEffect(() => {
+    if (streetLogRef.current.handNumber !== game.handNumber) {
+      streetLogRef.current = { handNumber: game.handNumber, streets: [] };
+    }
+
+    const street = game.phase;
+    if (street === "preflop" || street === "flop" || street === "turn" || street === "river") {
+      const alreadyLogged = streetLogRef.current.streets.some((s) => s.street === street);
+      if (!alreadyLogged) {
+        streetLogRef.current.streets.push({
+          street,
+          pot: game.pot,
+          boardCards: [...game.boardCards],
+        });
+      }
+      return;
+    }
+
+    if (street === "settlement" && streetLogRef.current.streets.length > 0) {
+      const entry: HandHistoryEntry = {
+        tableId,
+        handNumber: game.handNumber,
+        timestamp: Date.now(),
+        streets: streetLogRef.current.streets,
+        finalPot: game.pot,
+        boardCards: game.boardCards,
+        holeCards: userPlayer?.cards,
+        handRankName: buildHandRankName(userPlayer?.cards, game.boardCards),
+        winnerAddress,
+        txHash: game.lastTxHash,
+      };
+      saveHandHistoryEntry(entry);
+      setHistoryEntries(loadHandHistory(tableId));
+      streetLogRef.current = { handNumber: game.handNumber, streets: [] };
+    }
+  }, [game.phase, game.handNumber, game.pot, game.boardCards, game.lastTxHash, tableId, userPlayer, winnerAddress]);
+
   const currentBet = Math.max(...game.players.map((p) => p.betThisRound), 0);
   const displayCurrentBet = currentBet;
   const displayPot = game.pot;
@@ -414,6 +473,21 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
               TABLE #{tableId}
             </h1>
             <GameBoyButton onClick={() => setGameboyOpen(true)} />
+            <button
+              onClick={() => setHistoryOpen(true)}
+              className="text-[9px]"
+              style={{
+                background: "none",
+                border: "none",
+                color: "#c8e6ff",
+                textDecoration: "underline",
+                cursor: "pointer",
+                padding: 0,
+              }}
+              title="Hand History"
+            >
+              HISTORY
+            </button>
           </div>
 
           <div className="flex items-center gap-3">
@@ -558,6 +632,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
                     isUser={false}
                     isWinner={!!winnerAddress && player.address === winnerAddress}
                     isBot={playMode === "single"}
+                    alias={getAlias(player.address) ?? undefined}
                     hideChipStats={false}
                   />
                 ))}
@@ -629,6 +704,17 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
                   isDealer={userPlayer.seat === game.dealerSeat}
                   isUser={true}
                   isWinner={!!winnerAddress && userPlayer.address === winnerAddress}
+                  alias={getAlias(userPlayer.address) ?? undefined}
+                  onEditAlias={() => {
+                    const next = window.prompt(
+                      "Set your table alias (max 16 chars):",
+                      getAlias(userPlayer.address) ?? ""
+                    );
+                    if (next !== null) {
+                      setAlias(userPlayer.address, next);
+                      bumpAliasTick((t) => t + 1);
+                    }
+                  }}
                   hideChipStats={false}
                 />
               ) : (
@@ -696,6 +782,12 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
         open={gameboyOpen}
         onClose={() => setGameboyOpen(false)}
         onLogout={() => setWallet(null)}
+      />
+
+      <HandHistoryPanel
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        entries={historyEntries}
       />
     </PixelWorld>
   );
