@@ -423,3 +423,30 @@ export async function getCommitteeStatus(): Promise<CommitteeStatusResponse> {
   if (!res.ok) throw new Error(`Failed to get status: ${res.status}`);
   return res.json();
 }
+
+// ── Stats ────────────────────────────────────────────────────────────────────
+
+export interface GlobalStats {
+  hands_played: number;
+  biggest_pot: number;
+  total_players_joined: number;
+}
+
+export interface PlayerStats {
+  address: string;
+  hands_played: number;
+  hands_won: number;
+  biggest_pot_won: number;
+}
+
+export interface StatsResponse {
+  global: GlobalStats;
+  leaderboard: PlayerStats[];
+  cached_at: number;
+}
+
+export async function getStats(): Promise<StatsResponse> {
+  const res = await fetch(`${API_BASE}/api/stats`);
+  if (!res.ok) throw new Error(`Failed to get stats: ${res.status}`);
+  return res.json();
+}

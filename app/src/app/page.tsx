@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { PixelWorld } from "@/components/PixelWorld";
 import { PixelCat } from "@/components/PixelCat";
 import { PixelChip } from "@/components/PixelChip";
@@ -637,6 +638,19 @@ export default function Home() {
         <div className="fixed bottom-[12%] right-[6%] z-[5]">
           <PixelCat sprite={20} size={96} flipped />
         </div>
+
+        {/* Stats link */}
+        <Link
+          href="/stats"
+          className="fixed top-3 right-3 z-10 text-[8px] opacity-60 hover:opacity-100 transition-opacity"
+          style={{
+            color: "#c47d2e",
+            fontFamily: "'Press Start 2P', monospace",
+            textDecoration: "none",
+          }}
+        >
+          📊 STATS
+        </Link>
       </div>
     </PixelWorld>
   );

@@ -35,10 +35,12 @@ use tower_http::cors::CorsLayer;
 use serde::Serialize;
 
 mod api;
-mod middleware as request_log;
+#[path = "middleware.rs"]
+mod request_log;
 mod mpc;
 mod session_gc;
 mod soroban;
+mod stats;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct LatencyHistogram {
@@ -94,6 +96,7 @@ struct AppState {
     metrics: MetricsState,
     chat_channels: Arc<Mutex<HashMap<u32, tokio::sync::broadcast::Sender<String>>>>,
     mpc_sessions: session_gc::SessionStore,
+    stats: stats::StatsStore,
 }
 
 #[derive(Clone)]
@@ -211,6 +214,26 @@ async fn main() {
 
     session_gc::spawn_gc_task(Arc::clone(&mpc_sessions));
 
+    let stats_store = stats::new_store();
+
+    // Spawn the Horizon event indexer if Soroban is configured.
+    if soroban_config.is_configured() && !soroban_config.poker_table_contract.is_empty() {
+        let horizon_url = std::env::var("HORIZON_URL")
+            .unwrap_or_else(|_| "https://horizon-testnet.stellar.org".to_string());
+        let contract_id = soroban_config.poker_table_contract.clone();
+        let poll_secs: u64 = std::env::var("STATS_POLL_SECONDS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(15);
+        stats::spawn_indexer(
+            Arc::clone(&stats_store),
+            horizon_url,
+            contract_id,
+            std::time::Duration::from_secs(poll_secs),
+        );
+        tracing::info!("Stats indexer started (poll={}s)", poll_secs);
+    }
+
     let state = AppState {
         tables: Arc::new(RwLock::new(HashMap::new())),
         lobby_assignments: Arc::new(RwLock::new(HashMap::new())),
@@ -221,6 +244,7 @@ async fn main() {
         metrics: metrics.clone(),
         chat_channels: Arc::new(Mutex::new(HashMap::new())),
         mpc_sessions,
+        stats: stats_store,
     };
 
     // Spawn background node health check task
@@ -255,6 +279,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/api/health", get(health))
+        .route("/api/stats", get(get_stats))
         .route("/api/tables/create", post(api::create_table))
         .route("/api/tables/open", get(api::list_open_tables))
         .route("/api/chain-config", get(api::get_chain_config))
@@ -482,4 +507,13 @@ async fn handle_chat_socket(socket: WebSocket, table_id: u32, state: AppState) {
         _ = &mut send_task => recv_task.abort(),
         _ = &mut recv_task => send_task.abort(),
     }
+}
+
+/// GET /api/stats
+///
+/// Returns global statistics and a top-10 leaderboard, served from an
+/// in-memory cache with a 30-second TTL.
+async fn get_stats(State(state): State<AppState>) -> Json<stats::StatsResponse> {
+    let ttl = std::time::Duration::from_secs(30);
+    Json(stats::get_stats(&state.stats, ttl).await)
 }
