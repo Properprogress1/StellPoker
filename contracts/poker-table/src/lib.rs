@@ -25,6 +25,18 @@ const MAX_PLAYERS_PER_TABLE: u32 = 6;
 #[contract]
 pub struct PokerTableContract;
 
+fn require_not_paused(env: &Env, table_id: u32) -> Result<(), PokerTableError> {
+    if env
+        .storage()
+        .instance()
+        .get::<DataKey, bool>(&DataKey::Paused(table_id))
+        .unwrap_or(false)
+    {
+        return Err(PokerTableError::ContractPaused);
+    }
+    Ok(())
+}
+
 fn load_table(env: &Env, table_id: u32) -> Result<TableState, PokerTableError> {
     let key = DataKey::Table(table_id);
     let table: TableState = env
@@ -176,6 +188,7 @@ impl PokerTableContract {
         buy_in: i128,
     ) -> Result<u32, PokerTableError> {
         player.require_auth();
+        require_not_paused(&env, table_id)?;
 
         let mut table = load_table(&env, table_id)?;
 
@@ -229,6 +242,7 @@ impl PokerTableContract {
     /// Leave the table and withdraw remaining stack.
     pub fn leave_table(env: Env, table_id: u32, player: Address) -> Result<i128, PokerTableError> {
         player.require_auth();
+        require_not_paused(&env, table_id)?;
 
         let mut table = load_table(&env, table_id)?;
 
@@ -275,6 +289,7 @@ impl PokerTableContract {
 
     /// Start a new hand. Called after enough players are seated.
     pub fn start_hand(env: Env, table_id: u32) -> Result<(), PokerTableError> {
+        require_not_paused(&env, table_id)?;
         let mut table = load_table(&env, table_id)?;
 
         if !matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) {
@@ -330,6 +345,7 @@ impl PokerTableContract {
         public_inputs: Bytes,
     ) -> Result<(), PokerTableError> {
         committee.require_auth();
+        require_not_paused(&env, table_id)?;
 
         let mut table = load_table(&env, table_id)?;
 
@@ -380,6 +396,7 @@ impl PokerTableContract {
         action: Action,
     ) -> Result<(), PokerTableError> {
         player.require_auth();
+        require_not_paused(&env, table_id)?;
 
         let mut table = load_table(&env, table_id)?;
 
@@ -407,6 +424,7 @@ impl PokerTableContract {
         public_inputs: Bytes,
     ) -> Result<(), PokerTableError> {
         committee.require_auth();
+        require_not_paused(&env, table_id)?;
 
         let mut table = load_table(&env, table_id)?;
 
@@ -480,6 +498,7 @@ impl PokerTableContract {
         public_inputs: Bytes,
     ) -> Result<(), PokerTableError> {
         committee.require_auth();
+        require_not_paused(&env, table_id)?;
 
         let mut table = load_table(&env, table_id)?;
 
@@ -542,6 +561,7 @@ impl PokerTableContract {
     /// Claim timeout when opponent or committee is stalling.
     pub fn claim_timeout(env: Env, table_id: u32, claimer: Address) -> Result<(), PokerTableError> {
         claimer.require_auth();
+        require_not_paused(&env, table_id)?;
 
         let mut table = load_table(&env, table_id)?;
 
@@ -559,6 +579,40 @@ impl PokerTableContract {
     // ========================================================================
     // Admin Functions (Stellar Game Studio pattern)
     // ========================================================================
+
+    /// Pause a table (admin only). All non-admin operations will revert while paused.
+    /// NOTE: for production consider a timelock or multi-sig for unpause.
+    pub fn pause(env: Env, table_id: u32) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::Paused(table_id), &true);
+        env.events()
+            .publish((Symbol::new(&env, "table_paused"), table_id), table.admin);
+        Ok(())
+    }
+
+    /// Unpause a table (admin only).
+    /// NOTE: for production consider a timelock or multi-sig here.
+    pub fn unpause(env: Env, table_id: u32) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::Paused(table_id), &false);
+        env.events()
+            .publish((Symbol::new(&env, "table_unpaused"), table_id), table.admin);
+        Ok(())
+    }
+
+    /// Returns true if the table is currently paused.
+    pub fn is_paused(env: Env, table_id: u32) -> bool {
+        env.storage()
+            .instance()
+            .get::<DataKey, bool>(&DataKey::Paused(table_id))
+            .unwrap_or(false)
+    }
 
     /// Get the admin address for a table.
     pub fn get_admin(env: Env, table_id: u32) -> Result<Address, PokerTableError> {

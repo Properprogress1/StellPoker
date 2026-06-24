@@ -144,4 +144,5 @@ pub struct TableState {
 #[derive(Clone)]
 pub enum DataKey {
     Table(u32),
+    Paused(u32), // per-table pause flag
 }
