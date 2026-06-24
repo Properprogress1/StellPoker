@@ -97,6 +97,7 @@ struct AppState {
     chat_channels: Arc<Mutex<HashMap<u32, tokio::sync::broadcast::Sender<String>>>>,
     mpc_sessions: session_gc::SessionStore,
     stats: stats::StatsStore,
+    wallet_challenges: Arc<RwLock<HashMap<String, (String, std::time::Instant)>>>,
 }
 
 #[derive(Clone)]
@@ -245,6 +246,7 @@ async fn main() {
         chat_channels: Arc::new(Mutex::new(HashMap::new())),
         mpc_sessions,
         stats: stats_store,
+        wallet_challenges: Arc::new(RwLock::new(HashMap::new())),
     };
 
     // Spawn background node health check task
@@ -280,6 +282,8 @@ async fn main() {
     let app = Router::new()
         .route("/api/health", get(health))
         .route("/api/stats", get(get_stats))
+        .route("/api/wallet/challenge", post(api::get_wallet_challenge))
+        .route("/api/wallet/verify", post(api::verify_wallet))
         .route("/api/tables/create", post(api::create_table))
         .route("/api/tables/open", get(api::list_open_tables))
         .route("/api/chain-config", get(api::get_chain_config))

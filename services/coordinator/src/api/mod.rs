@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{mpc, session_gc, soroban, AppState, TableSession};
-use auth::{allow_insecure_dev_auth, enforce_rate_limit, validate_signed_request};
+use auth::{allow_insecure_dev_auth, enforce_rate_limit, validate_signed_request, verify_signature, is_valid_stellar_address};
 use parsing::{
     parse_deal_outputs, parse_requested_buy_in, parse_reveal_outputs, parse_showdown_outputs,
 };
@@ -998,4 +998,69 @@ pub async fn get_mpc_session_status(
         "cancel_reason": session.cancel_reason,
         "elapsed_secs": session.started_at.elapsed().as_secs(),
     })))
+}
+
+/// POST /api/wallet/challenge
+pub async fn get_wallet_challenge(
+    State(state): State<AppState>,
+    Json(req): Json<WalletChallengeRequest>,
+) -> Result<Json<WalletChallengeResponse>, StatusCode> {
+    let address = req.address.trim().to_string();
+    if !is_valid_stellar_address(&address) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let challenge = format!(
+        "stellar-poker-challenge|{}|{}",
+        Uuid::new_v4(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    );
+
+    let mut guard = state.wallet_challenges.write().await;
+    let now = std::time::Instant::now();
+    guard.retain(|_, (_, created_at)| now.duration_since(*created_at) < std::time::Duration::from_secs(300));
+    guard.insert(address, (challenge.clone(), now));
+
+    Ok(Json(WalletChallengeResponse { challenge }))
+}
+
+/// POST /api/wallet/verify
+pub async fn verify_wallet(
+    State(state): State<AppState>,
+    Json(req): Json<WalletVerifyRequest>,
+) -> Result<Json<WalletVerifyResponse>, StatusCode> {
+    let address = req.address.trim().to_string();
+    let challenge = req.challenge;
+    let signature = req.signature;
+
+    if !is_valid_stellar_address(&address) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let mut guard = state.wallet_challenges.write().await;
+    let now = std::time::Instant::now();
+    guard.retain(|_, (_, created_at)| now.duration_since(*created_at) < std::time::Duration::from_secs(300));
+
+    let Some((stored_challenge, created_at)) = guard.get(&address) else {
+        return Ok(Json(WalletVerifyResponse { verified: false }));
+    };
+
+    if stored_challenge != &challenge {
+        return Ok(Json(WalletVerifyResponse { verified: false }));
+    }
+
+    if now.duration_since(*created_at) >= std::time::Duration::from_secs(300) {
+        guard.remove(&address);
+        return Ok(Json(WalletVerifyResponse { verified: false }));
+    }
+
+    if verify_signature(&address, &challenge, &signature).is_ok() {
+        guard.remove(&address);
+        Ok(Json(WalletVerifyResponse { verified: true }))
+    } else {
+        Ok(Json(WalletVerifyResponse { verified: false }))
+    }
 }
