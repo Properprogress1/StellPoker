@@ -35,6 +35,7 @@ use tower_http::cors::CorsLayer;
 use serde::Serialize;
 
 mod api;
+mod db;
 #[path = "middleware.rs"]
 mod request_log;
 mod feature_flags;
