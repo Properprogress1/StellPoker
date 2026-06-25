@@ -5,6 +5,7 @@ mod admin_extended;
 mod auth;
 pub mod flags;
 mod parsing;
+pub mod plugins;
 mod session;
 pub mod types;
 

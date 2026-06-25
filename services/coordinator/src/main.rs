@@ -43,6 +43,7 @@ mod cors_db;
 mod db;
 mod feature_flags;
 mod mpc;
+mod plugin;
 mod rate_limit_db;
 #[path = "middleware.rs"]
 mod request_log;
@@ -124,6 +125,7 @@ struct AppState {
     feature_flags: feature_flags::FeatureFlagStore,
     db_pool: Option<Arc<sqlx::PgPool>>,
     instance_id: String,
+    pub plugin_loader: Arc<tokio::sync::RwLock<plugin::PluginLoader>>,
 }
 
 #[derive(Clone)]
@@ -380,6 +382,25 @@ async fn main() {
     let instance_id = session_migration::generate_instance_id();
     tracing::info!("Coordinator instance ID: {}", instance_id);
 
+    let mut wasm_config = wasmtime::Config::new();
+    wasm_config
+        .consume_fuel(true)
+        .wasm_multi_value(true)
+        .wasm_memory64(false);
+    let plugin_engine = wasmtime::Engine::new(&wasm_config)
+        .expect("failed to create wasmtime engine");
+    let plugin_loader = plugin::PluginLoader::new(plugin_engine);
+    let plugin_loader = Arc::new(tokio::sync::RwLock::new(plugin_loader));
+    {
+        let loader = plugin_loader.read().await;
+        let loaded = loader.scan_plugin_directory(None).await;
+        if loaded.is_empty() {
+            tracing::info!("No Wasm plugins found in ./plugins directory");
+        } else {
+            tracing::info!("Auto-loaded {} Wasm plugin(s): {:?}", loaded.len(), loaded);
+        }
+    }
+
     let state = AppState {
         tables: Arc::new(RwLock::new(HashMap::new())),
         lobby_assignments: Arc::new(RwLock::new(HashMap::new())),
@@ -396,6 +417,7 @@ async fn main() {
         feature_flags: feature_flag_store,
         db_pool,
         instance_id,
+        plugin_loader,
     };
 
     // Spawn background node health check task
@@ -434,6 +456,23 @@ async fn main() {
         .route("/api/stats", get(get_stats))
         .route("/api/flags", get(api::flags::list_flags))
         .route("/api/flags/:key", post(api::flags::set_flag))
+        // Plugin management endpoints
+        .route("/api/plugins", get(api::plugins::list_plugins))
+        .route("/api/plugins/health", get(api::plugins::plugin_health))
+        .route("/api/plugins/load", post(api::plugins::load_plugin))
+        .route("/api/plugins/rescan", post(api::plugins::rescan_plugins))
+        .route(
+            "/api/plugins/:name",
+            get(api::plugins::get_plugin),
+        )
+        .route(
+            "/api/plugins/:name/unload",
+            post(api::plugins::unload_plugin),
+        )
+        .route(
+            "/api/plugins/:name/call",
+            post(api::plugins::call_plugin_function),
+        )
         .route("/api/tables/create", post(api::create_table))
         .route("/api/tables/open", get(api::list_open_tables))
         .route("/api/chain-config", get(api::get_chain_config))
