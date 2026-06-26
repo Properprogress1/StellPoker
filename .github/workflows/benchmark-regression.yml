@@ -49,11 +49,18 @@ jobs:
 
       - name: Post comment on PR
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
+        env:
+          COMMENT_PAYLOAD: ${{ runner.temp }}/comment.json
         with:
           script: |
             const fs = require('fs');
-            const comment = JSON.parse(fs.readFileSync(process.env.COMMENT_PAYLOAD, 'utf8'));
+            const payloadPath = process.env.COMMENT_PAYLOAD;
+            if (!payloadPath || !fs.existsSync(payloadPath)) {
+              core.warning(`Skipping PR comment because COMMENT_PAYLOAD is missing: ${payloadPath}`);
+              return;
+            }
+            const comment = JSON.parse(fs.readFileSync(payloadPath, 'utf8'));
             github.rest.issues.createComment({
               ...context.repo,
               issue_number: context.issue.number,

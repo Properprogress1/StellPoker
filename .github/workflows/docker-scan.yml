@@ -56,8 +56,8 @@ jobs:
           severity: 'CRITICAL,HIGH'
 
       - name: Upload Trivy results to GitHub Security
+        if: always() && hashFiles(format('{0}-trivy-results.sarif', matrix.image.name)) != ''
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
         with:
           sarif_file: '${{ matrix.image.name }}-trivy-results.sarif'
           category: 'trivy-${{ matrix.image.name }}'
@@ -71,7 +71,7 @@ jobs:
 
       - name: Comment PR with scan results
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const fs = require('fs');
@@ -102,7 +102,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trivy-scan-results
+          name: trivy-scan-results-${{ matrix.image.name }}
           path: '*-trivy-results.*'
           retention-days: 30
 
@@ -115,14 +115,15 @@ jobs:
       - name: Download all scan results
         uses: actions/download-artifact@v4
         with:
-          name: trivy-scan-results
+          pattern: trivy-scan-results-*
+          merge-multiple: true
         continue-on-error: true
 
       - name: Generate scan summary
         run: |
           echo "## Docker Vulnerability Scan Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "All Docker images have been scanned for vulnerabilities." >> $GITHUB_STEP_SUMMARY
+          echo "Scan job result: ${{ needs.scan-images.result }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if ls *-trivy-results.sarif 1> /dev/null 2>&1; then
             echo "**Scanned Images:**" >> $GITHUB_STEP_SUMMARY
@@ -130,5 +131,5 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "Results are available in the Security tab." >> $GITHUB_STEP_SUMMARY
           else
-            echo "⚠️ No scan results available. Check whether the image build and scan steps completed successfully." >> $GITHUB_STEP_SUMMARY
+            echo "No scan results were produced. Check whether the image build and scan steps completed successfully." >> $GITHUB_STEP_SUMMARY
           fi
