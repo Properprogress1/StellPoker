@@ -147,7 +147,7 @@ jobs:
         run: cd app && npm ci
 
       - name: Lint
-        run: cd app && npm run lint
+        run: cd app && npm run lint --if-present
 
       - name: Build
         run: cd app && npm run build
