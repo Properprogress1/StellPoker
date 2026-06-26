@@ -16,6 +16,7 @@ import {
   connectFreighterWallet as connectFreighter,
   trySilentReconnect as tryReconnectFreighter,
   isFreighterInstalled,
+  getActiveAddress as getActiveFreighterAddress,
 } from "./freighter";
 
 import {
@@ -77,6 +78,10 @@ export async function trySilentReconnect(): Promise<WalletSession | null> {
   if (lobstrSession) return lobstrSession;
 
   return null;
+}
+
+export async function getActiveAddress(): Promise<string | null> {
+  return getActiveFreighterAddress();
 }
 
 export function getWalletDisplayName(session: WalletSession): string {

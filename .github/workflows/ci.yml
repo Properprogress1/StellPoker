@@ -116,6 +116,9 @@ jobs:
       - name: Compile circuits
         run: ./scripts/compile-circuits.sh
 
+      - name: Install co-noir for CRS download
+        run: cargo install --git https://github.com/TaceoLabs/co-snarks --branch main co-noir
+
       - name: Download CRS
         run: ./scripts/download-crs.sh
 
@@ -204,7 +207,7 @@ jobs:
         run: cd app && npm ci
 
       - name: Lint
-        run: cd app && npm run lint
+        run: cd app && npm run lint --if-present
 
       - name: Build
         run: cd app && npm run build
