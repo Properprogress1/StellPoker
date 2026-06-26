@@ -130,8 +130,9 @@ struct AppState {
     db_pool: Option<Arc<sqlx::PgPool>>,
     instance_id: String,
     pub plugin_loader: Arc<tokio::sync::RwLock<plugin::PluginLoader>>,
-    pub archive_store: archiver::ArchiveStore,
-    pub archive_config: archiver::ArchiveConfig,
+    /// Shared HTTP client for all coordinator → MPC node calls.
+    /// Pre-configured with client TLS certificates and trusted node certs.
+    mpc_client: reqwest::Client,
 }
 
 #[derive(Clone)]
@@ -228,6 +229,16 @@ async fn main() {
         committee_secret: std::env::var("COMMITTEE_SECRET")
             .unwrap_or_else(|_| "test_secret".to_string()),
     };
+
+    // Build the shared MPC HTTP client (with optional mTLS / certificate pinning).
+    let mpc_client = match mpc::build_mpc_client() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to build MPC HTTP client: {}", e);
+            std::process::exit(1);
+        }
+    };
+    tracing::info!("MPC HTTP client initialised");
 
     let soroban_config = soroban::SorobanConfig::from_env();
     if soroban_config.is_configured() {
@@ -462,8 +473,7 @@ async fn main() {
         db_pool,
         instance_id,
         plugin_loader,
-        archive_store: archive_store.clone(),
-        archive_config: archive_config.clone(),
+        mpc_client,
     };
 
     if let Some(path) = hot_reload_snapshot {
@@ -481,6 +491,7 @@ async fn main() {
     let node_healths = state.metrics.node_healths.clone();
     let soroban_config = state.soroban_config.clone();
     let default_endpoints = state.mpc_config.node_endpoints.clone();
+    let hc_client = state.mpc_client.clone();
     tokio::spawn(async move {
         loop {
             let endpoints = if soroban_config.committee_registry_contract.is_empty() {
@@ -500,7 +511,9 @@ async fn main() {
 
             for endpoint in endpoints {
                 let url = format!("{}/health", endpoint);
-                let is_healthy = reqwest::get(&url)
+                let is_healthy = hc_client
+                    .get(&url)
+                    .send()
                     .await
                     .map(|r| r.status().is_success())
                     .unwrap_or(false);

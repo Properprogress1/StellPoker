@@ -394,6 +394,7 @@ pub async fn request_deal(
     }
 
     let prepared_deal = mpc::prepare_deal_from_nodes(
+        &state.mpc_client,
         &node_endpoints,
         &state.mpc_config.circuit_dir,
         table_id,
@@ -408,6 +409,7 @@ pub async fn request_deal(
     let proof_session_id = format!("table-{}-deal-{}", table_id, Uuid::new_v4());
     let _guard = SessionGuard::new(state.metrics.active_mpc_sessions.clone());
     let deal_proof = mpc::generate_proof_from_share_sets(
+        &state.mpc_client,
         table_id,
         &prepared_deal.share_set_ids,
         &proof_session_id,
@@ -563,6 +565,7 @@ pub async fn request_reveal(
     }
 
     let prepared_reveal = mpc::prepare_reveal_from_nodes(
+        &state.mpc_client,
         &node_endpoints,
         &state.mpc_config.circuit_dir,
         table_id,
@@ -579,6 +582,7 @@ pub async fn request_reveal(
     let proof_session_id = next_proof_session_id(session, &format!("reveal-{}", phase));
     let _guard = SessionGuard::new(state.metrics.active_mpc_sessions.clone());
     let reveal_proof = mpc::generate_proof_from_share_sets(
+        &state.mpc_client,
         table_id,
         &prepared_reveal.share_set_ids,
         &proof_session_id,
@@ -714,6 +718,7 @@ pub async fn request_showdown(
     }
 
     let prepared_showdown = mpc::prepare_showdown_from_nodes(
+        &state.mpc_client,
         &node_endpoints,
         &state.mpc_config.circuit_dir,
         table_id,
@@ -731,6 +736,7 @@ pub async fn request_showdown(
     let proof_session_id = next_proof_session_id(session, "showdown");
     let _guard = SessionGuard::new(state.metrics.active_mpc_sessions.clone());
     let showdown_proof = mpc::generate_proof_from_share_sets(
+        &state.mpc_client,
         table_id,
         &prepared_showdown.share_set_ids,
         &proof_session_id,
@@ -988,7 +994,7 @@ pub async fn get_player_cards(
     let positions = vec![*pos1, *pos2];
     drop(tables); // release read lock before async call
 
-    let (cards, salts) = mpc::resolve_hole_cards(&node_endpoints, table_id, &positions)
+    let (cards, salts) = mpc::resolve_hole_cards(&state.mpc_client, &node_endpoints, table_id, &positions)
         .await
         .map_err(|e| {
             tracing::error!("Failed to resolve hole cards: {}", e);
